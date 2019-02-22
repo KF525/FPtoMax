@@ -3,28 +3,64 @@ import scala.util.Try
 import scala.Console._
 /**
   * Make it polymorphic - Doesn't have to be IO - more generic
+  * Give up reliance on concrete data type. Develop ability to abstract over things that look like IO but are not IO.
+  * Helps us test better without interacting with the real world.
+  * Introduce a type class, Program.
+  *
   * Different aspects of our program have different requirements (Random, Console, Program).
-  * Give up reliance on concrete data type.  To do that introduce a type class, Program - abstract over things that look like IO -
   */
 object App2 {
   def parseInt(string: String): Option[Int] = Try(string.toInt).toOption
-  //type constructor that takes one type parameter
-  //chain sequential composition, take one program, given a function that turn an A into a program of a different type
-  //returns a program of that new type
-  //otherwise known as a monad
+
+  // Program is a type constructor that takes one type parameter (IO for example)
+  // monadic type
   trait Program[F[_]] {
+    // represents a program that is done, that already has value
     def finish[A](a: => A): F[A]
+
+    // chain many programs together, given one program that produces an Program[A] and another program that takes an A and returns a Program[B]
+    // chaining output of one program, as input for the next program
+    // sequential composition
     def chain[A, B](fa: F[A], afb: A => F[B]): F[B]
+
     def map[A, B](fa: F[A], ab: A => B): F[B]
   }
+
   object Program {
+    // give us one of these things for an implicit that is in scope
     def apply[F[_]](implicit F: Program[F]): Program[F] = F
   }
-  //any F[A] value will be enriched with map and flatMap methods
+
+  // create syntax with implicit class
+  // given an F[A] add some methods (extension methods) map and flatMap => so any F[A] value will be enriched with map and flatMap methods.
+  // so now if we have an instance of this type class in scope
   implicit class ProgramSyntax[F[_], A](fa: F[A]) {
     def map[B](f: A => B)(implicit F: Program[F]): F[B] = F.map(fa, f)
     def flatMap[B](afb: A => F[B])(implicit F: Program[F]): F[B] = F.chain(fa, afb)
   }
+
+  // IO companion object
+  object IO {
+
+    def point[A](a: A): IO[A] = IO(() => a)
+
+    // type class for Program[IO] - implement the Program methods, F is replaced with IO
+    implicit val ProgramIO = new Program[IO] {
+      def finish[A](a: => A): IO[A] = IO.point(a)
+      def chain[A, B](fa: IO[A], afb: A => IO[B]): IO[B] = fa.flatMap(afb)
+      def map[A, B](fa: IO[A], ab: A => B): IO[B] = fa.map(ab)
+    }
+
+    implicit val ConsoleIO = new Console[IO] {
+      def putStrLn(line: String): IO[Unit] = IO(() => println(line))
+      def getStrLn: IO[String] = IO(() => readLine())
+    }
+
+    implicit val RandomIO = new Random[IO] {
+      def nextInt(upper: Int): IO[Int] = IO(() => new scala.util.Random().nextInt(upper))
+    }
+  }
+
   def finish[F[_], A](a: => A)(implicit F: Program[F]): F[A] = F.finish(a)
   trait Console[F[_]] {
     def putStrLn(line: String): F[Unit]
@@ -49,21 +85,7 @@ object App2 {
     def map[B](f: A => B): IO[B] = IO(() => f(self.unsafeRun()))
     def flatMap[B](f: A => IO[B]): IO[B] = IO(() => f(self.unsafeRun()).unsafeRun())
   }
-  object IO {
-    def point[A](a: A): IO[A] = IO(() => a)
-    implicit val ProgramIO = new Program[IO] {
-      def finish[A](a: => A): IO[A] = IO.point(a)
-      def chain[A, B](fa: IO[A], afb: A => IO[B]): IO[B] = fa.flatMap(afb)
-      def map[A, B](fa: IO[A], ab: A => B): IO[B] = fa.map(ab)
-    }
-    implicit val ConsoleIO = new Console[IO] {
-      def putStrLn(line: String): IO[Unit] = IO(() => println(line))
-      def getStrLn: IO[String] = IO(() => readLine())
-    }
-    implicit val RandomIO = new Random[IO] {
-      def nextInt(upper: Int): IO[Int] = IO(() => new scala.util.Random().nextInt(upper))
-    }
-  }
+
   def checkContinue[F[_]: Program: Console](name: String): F[Boolean] = {
     for {
       _ <- putStrLn("Do you want to continue, " + name + "?")
@@ -96,7 +118,6 @@ object App2 {
     } yield ()
   }
 
-  //makes more generic what
   def main[F[_]: Program: Random: Console]: F[Unit] = {
     for {
       _ <- putStrLn("What is your name?")
