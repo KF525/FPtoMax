@@ -39,9 +39,16 @@ object App2 {
     def flatMap[B](afb: A => F[B])(implicit F: Program[F]): F[B] = F.chain(fa, afb)
   }
 
+  //describes a single interaction with the external world that produces an A
+  //immutable data structure
+  //no ability to see inside here
+  case class IO[A](unsafeRun: () => A) { self =>
+    def map[B](f: A => B): IO[B] = IO(() => f(self.unsafeRun()))
+    def flatMap[B](f: A => IO[B]): IO[B] = IO(() => f(self.unsafeRun()).unsafeRun())
+  }
+
   // IO companion object
   object IO {
-
     def point[A](a: A): IO[A] = IO(() => a)
 
     // type class for Program[IO] - implement the Program methods, F is replaced with IO
@@ -62,6 +69,7 @@ object App2 {
   }
 
   def finish[F[_], A](a: => A)(implicit F: Program[F]): F[A] = F.finish(a)
+
   trait Console[F[_]] {
     def putStrLn(line: String): F[Unit]
     def getStrLn: F[String]
@@ -71,20 +79,15 @@ object App2 {
   }
   def putStrLn[F[_]: Console](line: String): F[Unit] = Console[F].putStrLn(line)
   def getStrLn[F[_]: Console]: F[String] = Console[F].getStrLn
+
   trait Random[F[_]] {
     def nextInt(upper: Int): F[Int]
   }
   object Random {
     def apply[F[_]](implicit F: Random[F]): Random[F] = F
   }
+
   def nextInt[F[_]](upper: Int)(implicit F: Random[F]): F[Int] = Random[F].nextInt(upper)
-  //describes a single interaction with the external world that produces an A
-  //immutable data structure
-  //no ability to see inside here
-  case class IO[A](unsafeRun: () => A) { self =>
-    def map[B](f: A => B): IO[B] = IO(() => f(self.unsafeRun()))
-    def flatMap[B](f: A => IO[B]): IO[B] = IO(() => f(self.unsafeRun()).unsafeRun())
-  }
 
   def checkContinue[F[_]: Program: Console](name: String): F[Boolean] = {
     for {
@@ -126,5 +129,12 @@ object App2 {
       _ <- gameLoop(name)
     } yield ()
   }
+
   def mainIO: IO[Unit] = main[IO]
 }
+
+/*
+Final tagless - common way to create effectful interactions with the external world -
+benefits of polymorphism which allows for testability and reasonability
+look at type signature and you can constrain what these programs do - just by looking at the types
+*/
